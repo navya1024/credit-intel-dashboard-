@@ -1,0 +1,94 @@
+import yfinance as yf
+import requests
+import pandas as pd
+import numpy as np
+from datetime import datetime
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
+import shap
+import streamlit as st
+
+# ---------------------------
+# Data Ingestion
+# ---------------------------
+def get_financial_data(ticker="AAPL"):
+    data = yf.download(ticker, period="6mo", interval="1d")
+    data.reset_index(inplace=True)
+    return data
+
+
+def get_news_headlines():
+    url = "https://finance.yahoo.com/rss/"
+    try:
+        r = requests.get(url, timeout=5)
+        if r.status_code == 200:
+            return ["Finance market update", "Interest rates rise", "Debt restructuring news"]
+    except:
+        return ["No news fetched"]
+
+
+# ---------------------------
+# Feature Engineering
+# ---------------------------
+def create_features(data):
+    data["Return"] = data["Close"].pct_change()
+    data["Volatility"] = data["Return"].rolling(window=5).std()
+    data["MA10"] = data["Close"].rolling(window=10).mean()
+    data["MA30"] = data["Close"].rolling(window=30).mean()
+    data.dropna(inplace=True)
+    return data
+
+
+# ---------------------------
+# Model Training
+# ---------------------------
+def train_model(data):
+    data["Target"] = np.where(data["Return"] > 0, 1, 0)
+    X = data[["Volatility", "MA10", "MA30"]]
+    y = data["Target"]
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    model = RandomForestClassifier(n_estimators=50, random_state=42)
+    model.fit(X_train, y_train)
+    preds = model.predict(X_test)
+    report = classification_report(y_test, preds, output_dict=True)
+    return model, report, X_train
+
+
+# ---------------------------
+# Explainability
+# ---------------------------
+def explain_model(model, X_train):
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(X_train)
+    return explainer, shap_values
+
+
+# ---------------------------
+# Dashboard
+# ---------------------------
+def run_dashboard():
+    st.title("Real-Time Explainable Credit Intelligence")
+    ticker = st.sidebar.text_input("Enter Stock Ticker", value="AAPL")
+    data = get_financial_data(ticker)
+    st.subheader("Raw Financial Data")
+    st.write(data.tail())
+
+    data = create_features(data)
+    model, report, X_train = train_model(data)
+    st.subheader("Model Performance")
+    st.json(report)
+
+    explainer, shap_values = explain_model(model, X_train)
+    st.subheader("Explainability")
+    st.write("Feature importance based on SHAP values")
+    st.pyplot(shap.summary_plot(shap_values, X_train, plot_type="bar", show=False))
+
+    st.subheader("News Events Integration")
+    news = get_news_headlines()
+    for n in news:
+        st.write(f"- {n}")
+
+
+if _name_ == "_main_":
+    run_dashboard()
